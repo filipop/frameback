@@ -13,10 +13,15 @@ versioning follows [SemVer](https://semver.org/).
   human events (`review.submitted`, `thread.message` by default) are POSTed, HMAC-signed, as soon as they are written.
   Off by default.
 
+## [0.1.1] - 2026-11-09
+
 ### Changed
 
-- Docs: install-from-clone instructions, `$FB` command resolution in the skill, `carry --map` marked as planned,
-  SECURITY.md, package metadata, `npm run demo` no longer rebuilds or regenerates when not needed.
+- Docs: install from npm (`npm install -g frameback` / `npx frameback`), badges, and links to
+  [gbo-video](https://github.com/guillebecerrao/gbo-video), the Claude Code editing skill that integrates Frameback.
+- Discarding a typed comment with Esc no longer opens a native browser dialog: press Esc twice.
+- The comment filters stay on one row (they scroll sideways on narrow panels).
+- The top bar shows "Round N" only after a review was reopened, so a fresh version no longer reads "Round 1".
 
 ## [0.1.0] - 2026-11-09
 
@@ -30,7 +35,10 @@ First release.
 - File-based review protocol (`review/<stem>/`, schema version 1): one file per comment, append-only event log,
   human and agent fields, threads, soft delete, stale detection.
 - Live two-way status: `acknowledged`, `in_progress`, `prepared`, `applied`, `needs_info`, `declined`.
-- **Process review** flow and versioned deliverables: comments carry over to the next version for verification.
+- **Process review** flow and versioned deliverables: comments carry over to the next version for verification,
+  remapped to the new cut through source time (exact, clamped or "this moment was cut").
+- Resolved comments collapse into a group and are muted on the timeline.
+- The reviewer can reopen the latest version if an agent closed or delivered it by mistake.
 - CLI: `open`, `watch`, `list`, `show`, `update`, `reply`, `review`, `carry`, `export`, `timeline`, `mcp`,
   `skill install`.
 - MCP stdio server with a long-poll `frameback_wait_for_events` tool.

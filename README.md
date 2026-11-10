@@ -1,12 +1,15 @@
 # Frameback
 
+[![npm](https://img.shields.io/npm/v/frameback)](https://www.npmjs.com/package/frameback) [![CI](https://github.com/guillebecerrao/frameback/actions/workflows/ci.yml/badge.svg)](https://github.com/guillebecerrao/frameback/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 **Frame-accurate feedback for AI video editing.**
 
 Open the video your AI agent delivered, click on the exact frame, drag a region, select a range or a timeline item,
 and write what you want changed. Your agent sees it the moment you send it, prepares the changes while you keep
 reviewing, and renders the next version once. 100% local, open source, no accounts.
 
-Created by **Guillermo Becerra (GBO)** · [@guillebecerrao](https://github.com/guillebecerrao) · as a companion to his agentic editing workflow.
+Created by **Guillermo Becerra (GBO)** · [@guillebecerrao](https://github.com/guillebecerrao) · as the review companion of
+[gbo-video](https://github.com/guillebecerrao/gbo-video), his open-source agentic video editing skill.
 [Source](https://github.com/guillebecerrao/frameback) · [Issues](https://github.com/guillebecerrao/frameback/issues) · [Security](SECURITY.md)
 
 ## The problem
@@ -46,25 +49,29 @@ conveniences over the same files. See [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
 
 Requires Node 20+. ffmpeg is optional (waveform and video probing); the demo generator needs it.
 
-Frameback is not published on npm yet, so install it from a clone. This puts a `frameback` command on your PATH,
-which is what the agent skill calls from inside your video project:
+Install the `frameback` command globally (it is what the agent skill calls from inside your video project):
 
 ```sh
-git clone https://github.com/guillebecerrao/frameback.git
-cd frameback
-npm install && npm run build && npm link     # `frameback --version` should now work anywhere
+npm install -g frameback      # `frameback --version` should now work anywhere
 ```
 
 Then, from your video's folder:
 
 ```sh
-frameback open video.mp4
+frameback open video.mp4      # or, without installing: npx frameback open video.mp4
 ```
 
 The UI opens in your browser. Press `C` to comment at the playhead. Nothing else to configure.
-(Once the package is on npm, `npm i -g frameback` or `npx frameback …` will work too.)
 
-Try it with synthetic demo footage, from the clone (needs ffmpeg and ffprobe):
+To hack on Frameback itself, install from a clone instead:
+
+```sh
+git clone https://github.com/guillebecerrao/frameback.git
+cd frameback
+npm install && npm link
+```
+
+Try it with synthetic demo footage, from a clone (needs ffmpeg and ffprobe):
 
 ```sh
 npm run demo        # builds if needed, generates the demo once, opens the review UI on port 4747
@@ -152,6 +159,9 @@ claude mcp add frameback -- frameback mcp
 claude mcp add frameback -- node /absolute/path/to/frameback/dist/cli/index.js mcp
 ```
 
+Editing with [gbo-video](https://github.com/guillebecerrao/gbo-video)? It already includes this loop; you only need
+the `frameback` command on your PATH.
+
 Not using Claude Code? Point any agent at [`docs/INTEGRATION.md`](docs/INTEGRATION.md) (plain files, CLI, or MCP).
 [`examples/fake-agent.mjs`](examples/fake-agent.mjs) is a small scripted agent that shows the whole loop.
 
@@ -159,8 +169,9 @@ Not using Claude Code? Point any agent at [`docs/INTEGRATION.md`](docs/INTEGRATI
 
 - **Any EDL-based pipeline.** If an `edl.json` sits next to the video (`sources`, `ranges`, `broll`, word-level
   transcripts), Frameback derives cuts, transitions, B-roll, captions and words tracks from it. The shape is the
-  `video-use` `edl.json` shape, described in [`docs/PROTOCOL.md`](docs/PROTOCOL.md) §6; it is also used in the
-  author's own editing workflow.
+  `video-use` `edl.json` shape, described in [`docs/PROTOCOL.md`](docs/PROTOCOL.md) §6.
+- **[gbo-video](https://github.com/guillebecerrao/gbo-video).** The Claude Code video editing skill writes the
+  timeline sidecar on every render and runs the Frameback review loop out of the box (optional: it works without it).
 - **Timeline sidecar.** Emit `<video stem>.timeline.json` for an exact timeline. Spec and converters in
   [`docs/INTEGRATION.md`](docs/INTEGRATION.md).
 - **Versioned deliverables.** `final_v1.mp4` → `final_v2.mp4`: comments are carried to the new version for verification.

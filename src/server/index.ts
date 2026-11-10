@@ -42,7 +42,7 @@ export function startServer(opts: StartServerOptions = {}): Promise<RunningServe
   const registry = new Registry();
   const app = createApp({ registry, webDir: opts.serveWeb === false ? undefined : findWebDir(), dev: opts.dev });
   return new Promise((resolve, reject) => {
-    const server = app.listen(opts.port ?? 0, HOST);
+    const server = app.listen(opts.port ?? 0, process.env.FRAMEBACK_BIND || HOST);
     server.once("error", reject);
     server.once("listening", () => {
       server.off("error", reject);

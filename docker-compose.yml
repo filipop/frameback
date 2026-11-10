@@ -1,0 +1,20 @@
+# Frameback in Docker. UI: http://localhost:4747
+#   FRAMEBACK_VIDEOS=/path/to/videos docker compose up -d --build
+# Review data is written to <videos>/review/<stem>/, next to each video.
+services:
+  frameback:
+    build: .
+    container_name: frameback
+    restart: unless-stopped
+    ports:
+      # Publish on loopback only: Frameback has no authentication.
+      - "127.0.0.1:4747:4747"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # lets the optional webhook reach a service on the host
+    environment:
+      # Optional push to a webhook (off when empty). See README, "Webhook push".
+      FRAMEBACK_WEBHOOK_URL: ${FRAMEBACK_WEBHOOK_URL:-}
+      FRAMEBACK_WEBHOOK_SECRET: ${FRAMEBACK_WEBHOOK_SECRET:-}
+      FRAMEBACK_WEBHOOK_EVENTS: ${FRAMEBACK_WEBHOOK_EVENTS:-}
+    volumes:
+      - ${FRAMEBACK_VIDEOS:-./videos}:/videos

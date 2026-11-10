@@ -115,6 +115,7 @@ program
   .option("--timeline <path>", "Frameback timeline sidecar")
   .option("--no-carry", "do not carry comments over from the previous _vN version")
   .option("--dev", "API only; the Vite dev server serves the UI")
+  .option("--webhook <url>", "POST human events (review.submitted, thread.message) to this URL; secret via FRAMEBACK_WEBHOOK_SECRET")
   .action(action((video: string, o) => openCommand(video, o)));
 
 program

@@ -5,6 +5,14 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Docker: `Dockerfile` (multi-stage, Node 22 + ffmpeg), `docker-compose.yml` and an entrypoint that registers the videos
+  in `/videos`. New `FRAMEBACK_BIND` variable (default `127.0.0.1`) to choose the listen address inside a container.
+- Optional webhook push (`FRAMEBACK_WEBHOOK_URL`, `--webhook`, `FRAMEBACK_WEBHOOK_SECRET`, `FRAMEBACK_WEBHOOK_EVENTS`):
+  human events (`review.submitted`, `thread.message` by default) are POSTed, HMAC-signed, as soon as they are written.
+  Off by default.
+
 ### Changed
 
 - Docs: install-from-clone instructions, `$FB` command resolution in the skill, `carry --map` marked as planned,

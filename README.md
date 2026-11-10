@@ -72,6 +72,45 @@ node examples/fake-agent.mjs examples/demo/edit/final_demo_v1.mp4   # in another
 ```
 
 The URL is printed on start. To use another port: `node dist/cli/index.js open examples/demo/edit/final_demo_v1.mp4 --port 4880`.
+## Docker
+
+A `Dockerfile` and `docker-compose.yml` are included (Node 22 + ffmpeg). Point it at the folder with your videos:
+
+```sh
+FRAMEBACK_VIDEOS=/path/to/videos docker compose up -d --build
+# UI: http://localhost:4747   (open it as localhost, the Host/Origin guard rejects other names)
+```
+
+- The folder is mounted at `/videos`; review data is written next to each video, in `review/<stem>/`, so it survives
+  rebuilds. At start the container registers every video it finds in `/videos` (up to 3 levels deep).
+- Register a video added later: `docker exec frameback frameback open /videos/new.mp4 --no-open`.
+- Inside the container the server binds `0.0.0.0` (set by `FRAMEBACK_BIND`; the default stays `127.0.0.1`), because a
+  published port cannot reach a loopback-only listener. The compose file publishes it on `127.0.0.1` only. Keep it
+  that way: there is no authentication.
+- An agent on the host reads the same `review/` folder directly, or runs the CLI through `docker exec frameback frameback ...`
+  using container paths (`/videos/...`).
+
+## Webhook push (optional)
+
+By default an agent learns about new feedback by watching `events.ndjson` (`frameback watch`, MCP). If you would rather
+have Frameback call you, set a webhook; it is **off unless configured** and the only outbound request Frameback can make:
+
+| Variable | Meaning |
+|----------|---------|
+| `FRAMEBACK_WEBHOOK_URL` | `http(s)` URL to POST to. Also available as `frameback open --webhook <url>`. |
+| `FRAMEBACK_WEBHOOK_SECRET` | Optional. Signs the body: `X-Webhook-Signature-V2` = hex HMAC-SHA256 of `<X-Webhook-Timestamp>.<body>`. |
+| `FRAMEBACK_WEBHOOK_EVENTS` | Comma-separated event types. Default `review.submitted,thread.message`. |
+
+Only events written by the **human** are sent, so an agent never triggers itself. Body:
+
+```json
+{ "event_type": "review.submitted", "review": "final_v1", "commentId": null, "seq": 12,
+  "actor": "human", "reviewDir": "/path/to/review/final_v1", "data": { "counts": { "total": 3 }, "round": 1 } }
+```
+
+Delivery is fire and forget with 3 attempts; a dead endpoint never blocks the UI. With Docker, reach a service on the host
+as `http://host.docker.internal:<port>/...` (the compose file maps that name).
+
 <!-- Screenshot / GIF of the review UI: add docs/media/frameback.gif and embed it here before announcing. -->
 
 ## Ways to anchor a comment
@@ -139,7 +178,7 @@ Not using Claude Code? Point any agent at [`docs/INTEGRATION.md`](docs/INTEGRATI
 ## Privacy
 
 Everything runs on your machine. The server binds to `127.0.0.1`, serves only the videos you opened, and the review
-data lives in a `review/` folder next to each video. There is no telemetry, no account, and no network access.
+data lives in a `review/` folder next to each video. There is no telemetry, no account, and no network access, unless you opt in to the webhook push (see above).
 
 ## Roadmap
 

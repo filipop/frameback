@@ -7,6 +7,7 @@
  *  - write order on create: snapshot -> comment -> event
  *  - events.ndjson is append-only with a monotonically increasing `seq` (starting at 1)
  */
+import { fireWebhook } from "./webhook.js";
 import { promises as fs, constants as fsc } from "node:fs";
 import path from "node:path";
 import { remapAnchor } from "./remap.js";
@@ -197,6 +198,7 @@ async function appendEventLocked(
   const ev: Event = Event.parse({ seq: last + 1, at: now(), ...e });
   await fs.appendFile(p.events(reviewDir), JSON.stringify(ev) + "\n");
   await atomicWrite(seqFile, String(ev.seq));
+  fireWebhook(ev, reviewDir);
   return ev;
 }
 

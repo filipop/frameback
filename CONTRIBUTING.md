@@ -40,7 +40,8 @@ starts the server with `tsx watch` and the Vite dev server; open the Vite URL it
 - **Contract changes** (`schema.ts`, `store.ts`, `api.ts`, `docs/PROTOCOL.md`) need to be additive and documented in
   the protocol doc. Keep `schema.ts` and `PROTOCOL.md` in sync.
 - Times are seconds in the reviewed video. Regions are normalized to the encoded frame.
-- Local only: bind `127.0.0.1`, no telemetry, no network calls, no serving unregistered paths.
+- Local only: bind `127.0.0.1` (the container sets `FRAMEBACK_BIND=0.0.0.0`; the compose file still publishes loopback only),
+  no telemetry, no network calls beyond the opt-in webhook, no serving unregistered paths.
 - Code, comments and docs in English. No personal data, real footage or real client names in fixtures.
 
 ## Before you open a pull request

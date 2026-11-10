@@ -1,4 +1,5 @@
 /** `frameback open` — start the review server for a video, or attach to one that is already running. */
+import { checkWebhookConfig } from "../core/webhook.js";
 import path from "node:path";
 import open from "open";
 import type { Health, RegisterReviewRequest, RegisterReviewResponse } from "../core/index.js";
@@ -12,6 +13,7 @@ export interface OpenCommandOptions {
   timeline?: string;
   carry: boolean;
   dev?: boolean;
+  webhook?: string;
 }
 
 /** How many consecutive ports to try after the requested one. */
@@ -64,6 +66,8 @@ async function openBrowser(url: string): Promise<void> {
 }
 
 export async function openCommand(videoArg: string, opts: OpenCommandOptions): Promise<void> {
+  if (opts.webhook) process.env.FRAMEBACK_WEBHOOK_URL = opts.webhook;
+  const webhookOrigin = checkWebhookConfig();
   const video = await assertVideoFile(videoArg);
   const request: RegisterReviewRequest = {
     video,
@@ -103,6 +107,7 @@ export async function openCommand(videoArg: string, opts: OpenCommandOptions): P
         throw e;
       }
       const { entry, prepared } = result;
+      if (webhookOrigin) console.error(`frameback: webhook push enabled -> ${webhookOrigin} (opt-in; human events only)`);
       announce(server.port, entry.rid, entry.reviewDir);
       report(prepared.carried, prepared.warnings);
       if (opts.dev) {

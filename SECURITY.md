@@ -10,7 +10,8 @@ Frameback is a local tool for a single reviewer.
 - Review data is plain files in `review/<stem>/` next to each video, stored with relative paths. There is no telemetry,
   no account and no outbound network access.
 - Anything that can write to a `review/` folder or call the local server can act as the reviewer or the agent. Do not
-  expose the port beyond localhost.
+  expose the port beyond localhost. In Docker the server listens on `0.0.0.0` inside the container; publish the port on
+  `127.0.0.1` only (the provided compose file does). Frameback warns on stderr when `FRAMEBACK_BIND` is not loopback.
 
 ## Share mode (`frameback open --share [tailscale]`)
 

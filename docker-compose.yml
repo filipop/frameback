@@ -1,0 +1,13 @@
+# Frameback in Docker. UI: http://localhost:4747
+#   FRAMEBACK_VIDEOS=/path/to/videos docker compose up -d --build
+# Review data is written to <videos>/review/<stem>/, next to each video.
+services:
+  frameback:
+    build: .
+    container_name: frameback
+    restart: unless-stopped
+    ports:
+      # Publish on loopback only: Frameback has no authentication.
+      - "127.0.0.1:4747:4747"
+    volumes:
+      - ${FRAMEBACK_VIDEOS:-./videos}:/videos

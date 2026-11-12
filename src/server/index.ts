@@ -46,6 +46,8 @@ export interface RunningServer {
 }
 
 const HOST = "127.0.0.1";
+/** Listen address of the main listener. Only the container image overrides it (FRAMEBACK_BIND=0.0.0.0). */
+const BIND = process.env.FRAMEBACK_BIND || HOST;
 const here = path.dirname(fileURLToPath(import.meta.url));
 
 /** Root of the package: `dist/cli/` (built) and `src/server|cli/` (tsx) are both two levels below it. */
@@ -105,7 +107,14 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Runnin
 
   const main = http.createServer(app);
   servers.push(main);
-  port = await listen(main, opts.port ?? 0, HOST);
+  if (!["127.0.0.1", "::1", "localhost"].includes(BIND)) {
+    console.error(
+      `frameback: WARNING: listening on ${BIND}, not loopback. The API has no authentication: anyone who can reach ` +
+        `this port can read your videos and act as the reviewer. Only do this inside a container whose port is published ` +
+        `on 127.0.0.1, or behind a network you trust.`,
+    );
+  }
+  port = await listen(main, opts.port ?? 0, BIND);
 
   let expiryTimer: NodeJS.Timeout | undefined;
   if (cfg && net) {

@@ -5,6 +5,12 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Docker: `Dockerfile` (multi-stage, Node 22 + ffmpeg), `docker-compose.yml` and an entrypoint that registers the videos
+  in `/videos` once the server answers `/api/health`. New `FRAMEBACK_BIND` variable (default `127.0.0.1`); a warning is
+  printed on stderr whenever it is not loopback.
+
 ## [0.1.2] - 2026-11-12
 
 ### Changed

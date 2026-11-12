@@ -79,6 +79,27 @@ node examples/fake-agent.mjs examples/demo/edit/final_demo_v1.mp4   # in another
 ```
 
 The URL is printed on start. To use another port: `node dist/cli/index.js open examples/demo/edit/final_demo_v1.mp4 --port 4880`.
+## Docker
+
+A `Dockerfile` and `docker-compose.yml` are included (Node 22 + ffmpeg). Point it at the folder with your videos:
+
+```sh
+FRAMEBACK_VIDEOS=/path/to/videos docker compose up -d --build
+# UI: http://localhost:4747   (open it as localhost, the Host/Origin guard rejects other names)
+```
+
+- The folder is mounted at `/videos`; review data is written next to each video, in `review/<stem>/`, so it survives
+  rebuilds. At start the container registers every video it finds in `/videos` (up to 3 levels deep).
+- The container runs as the non-root `node` user (uid 1000), so the mounted folder must be writable by it
+  (on Linux: `chown -R 1000:1000 /path/to/videos`, or set `user:` in the compose file).
+- Register a video added later: `docker exec frameback frameback open /videos/new.mp4 --no-open`.
+- Inside the container the server binds `0.0.0.0` (set by `FRAMEBACK_BIND`; the default stays `127.0.0.1`), because a
+  published port cannot reach a loopback-only listener. The compose file publishes it on `127.0.0.1` only. Keep it
+  that way: there is no authentication, and the Host/Origin guard stops DNS rebinding, not a client that sends
+  `Host: localhost` itself. Frameback prints a warning on stderr whenever the bind address is not loopback.
+- An agent on the host reads the same `review/` folder directly, or runs the CLI through `docker exec frameback frameback ...`
+  using container paths (`/videos/...`).
+
 <!-- Screenshot / GIF of the review UI: add docs/media/frameback.gif and embed it here before announcing. -->
 
 ## Review from another computer

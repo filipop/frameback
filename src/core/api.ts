@@ -9,6 +9,7 @@
  *  GET    /api/reviews                             -> ReviewSummary[]            (registered reviews)
  *  POST   /api/reviews        RegisterReviewRequest -> RegisterReviewResponse            (register another video; used by a 2nd `frameback open`)
  *  GET    /api/reviews/:rid                        -> ReviewBundle
+ *  GET    /api/reviews/:rid/video-status           -> VideoStatus                (has the file changed since it was opened?)
  *  GET    /api/reviews/:rid/timeline               -> Timeline | null
  *  GET    /api/reviews/:rid/comments               -> Comment[]                  (non-deleted)
  *  GET    /api/reviews/:rid/comments/:id           -> Comment
@@ -31,21 +32,36 @@
  *  GET    /media/:rid/next                           -> 302 to the UI for review.nextVideo once delivered (registers it)
  *  GET    /*                                        -> web UI (dist/web); UI route: /?r=<rid>
  *
+ *  GET    /api/share?rid=                          -> { links, urls, mode, expiresAt } (share mode, trusted local clients only)
+ *
  * Security: bind 127.0.0.1 only; never serve paths that were not registered; ids validated by regex.
+ * Share mode (`open --share`): also listens on private addresses. Peers that are not a trusted local client (loopback
+ * socket + loopback Host + no proxy headers) need the key and may only call the review routes (allowlist in
+ * src/server/share.ts: read the review, comment, submit, reopen); anything else is 403. For them `reviewDir` is left
+ * out of ReviewSummary and absolute paths are removed from error messages.
  */
-import type { Comment, Review, Timeline, VideoInfo, HumanStatus, CommentPatch, NewComment, Event } from "./schema.js";
+import type { Comment, Review, Timeline, VideoInfo, VideoFingerprint, HumanStatus, CommentPatch, NewComment, Event } from "./schema.js";
 
 export type { Comment, Review, Timeline, VideoInfo, HumanStatus, CommentPatch, NewComment, Event };
+
+export interface VideoStatus {
+  /** the file under the review's video path no longer matches what was opened */
+  changed: boolean;
+  stored: VideoFingerprint | null;
+  current: VideoFingerprint | null;
+}
 
 export interface Health {
   app: "frameback";
   version: string;
   pid: number;
+  /** present (true) when the server runs with `--share` */
+  share?: boolean;
 }
 
 export interface ReviewSummary {
   rid: string;
-  reviewDir: string; // absolute
+  reviewDir: string; // absolute (omitted for share-mode remote peers)
   videoName: string; // basename
   state: Review["state"];
   counts: { total: number; pending: number; prepared: number; applied: number; needs_info: number; reopened?: number };
@@ -71,6 +87,8 @@ export interface ReviewBundle {
   versions: { name: string; rid: string | null; isCurrent: boolean }[];
   /** set when review.nextVideo exists */
   next: { name: string; url: string } | null;
+  /** has the video file changed since the review was opened? `changed: true` => comment times may not match */
+  videoStatus: VideoStatus;
 }
 
 export interface Waveform {
@@ -88,6 +106,8 @@ export interface RegisterReviewRequest {
   timeline?: string;
   /** false disables carrying comments over from the previous `_vN` version (default true) */
   carry?: boolean;
+  /** accept a video that changed since it was opened (`frameback open --force`) */
+  force?: boolean;
 }
 
 export interface CreateCommentRequest {

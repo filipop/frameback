@@ -32,16 +32,37 @@ After you deliver a video (preview or final):
 
 1. Start the UI in the background (do not block on it): `frameback open <video> --no-open` if the user is not at the
    screen, otherwise `frameback open <video>`. Use `$FB` (see above) when `frameback` is not on PATH.
+   **Reviewer on another computer** (they say they are on a different machine, laptop or Mac, or on wifi/Tailscale):
+   launch with `frameback open <video> --no-open --share tailscale` instead, and give them ONLY the link printed under
+   "To review from another computer, open this link there" (verbatim). Do not paste the "Other addresses" unless it fails to
+   open; never hand over the `this Mac only` link. Prefer `--share tailscale` whenever the reviewer is not on the same trusted network
+   (home/office): plain wifi is not encrypted. Use plain `--share` (also prints local-network links) only when they say
+   they are on the same trusted wifi, or Tailscale is not available (the command says so). Warn them in one line that
+   anyone with that link can watch, comment and submit, and that it expires in 12 h (`--share-ttl <hours>`, max 24) or
+   when the process ends. If it fails because a server is already running without `--share` (or in another mode),
+   stop that server and start again.
 2. Announce the printed URL to the user in one line, plus what to do: comment as you watch, press **Process review**
    when done.
-3. Start listening, before anything else is on disk to miss:
-   - **Preferred**: the Monitor tool running `frameback watch <video> --json --actor human,system`. Every stdout line is one event, so
-     every comment becomes one notification.
-   - Fallback A: a background Bash task `frameback watch <video> --json --exit-on review.submitted` (one
-     notification when the review is submitted; read comments with `frameback list`).
-   - Fallback B (MCP configured): loop on `frameback_wait_for_events` with the last `lastSeq`.
+3. Start listening, before anything else is on disk to miss. **Required**: the Monitor tool (or your environment's
+   persistent background-process mechanism) running `frameback watch <video> --json --actor human,system`. Every stdout
+   line is one event, so every comment becomes one notification the moment it is sent.
+   - **You handle each comment as it arrives; you never wait for `review.submitted` to start working.** On every
+     `comment.created`, classify it, queue it or hand it to a subagent (swap a photo, find another song, redesign an
+     animation…), and set its status (`acknowledged` / `in_progress`) while the person keeps reviewing.
+     **Process review** (`review.submitted`) only *closes the round*: then you wait for what is in flight, integrate, and
+     render the next version.
+   - Only if your environment cannot keep a background process alive: a Bash task
+     `frameback watch <video> --json --exit-on review.submitted` (or, with MCP, a loop on `frameback_wait_for_events` using
+     the last `lastSeq`). **This is not real time**: it only notifies when the round is closed, so poll
+     `frameback list <video> --json --needs-work` yourself between steps. Do not choose it just because it is simpler.
+   Example flow: `comment.created` → `update --status acknowledged` → hand to a subagent, `--status in_progress` →
+   subagent done, `--status prepared --plan "…"`; later `review.submitted` → `review --state processing` → integrate
+   the prepared work → render vN+1 → `update --status applied --applied-in <stem>` → `review --state delivered --next-video …`.
    Start the watch on the video the reviewer is currently looking at, and only one watch per video.
-   If you resume a session, run `frameback list <video> --json` first and watch with `--since <lastSeq>`.
+   `watch` remembers the last event it delivered (`<reviewDir>/.cursors/watch.json`), so if you restart it (e.g. to change
+   `--actor`) it continues without losing or repeating events; `--since <n>` / `--tail` override that, `--since 0`
+   starts over, and `--cursor <name>` keeps a separate position per consumer. If you resume a session, run
+   `frameback list <video> --json` first to catch up.
 
 ## 2. Triage loop (one pass per event)
 
@@ -77,7 +98,9 @@ Other events:
 1. `frameback review <video> --state processing`.
 2. `frameback export <video>` (or `list --json`) to get the final set. Finish everything still `pending`,
    `acknowledged`, `in_progress` or `needs_info` without an answer (state the assumption in the `--reply`).
-3. Render **once**, from the staging description, to the next versioned file (`..._v2.mp4`, never overwrite).
+3. Render **once**, from the staging description, to the next versioned file (`..._v2.mp4`). Never overwrite a file that is
+   under review, not even a preview: the reviewer's comments are anchored to that exact cut. Frameback warns the reviewer
+   and `frameback open` refuses (without `--force`) when the file changed; a new cut is always a new `_v(N+1)` file.
    Prefer cheap previews to check risky edits before the full render.
 4. Mark each handled comment: `frameback update <video> <id> --status applied --applied-in <next stem>`.
 5. `frameback review <video> --state delivered --next-video <next video path>`.

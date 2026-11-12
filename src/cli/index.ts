@@ -32,16 +32,17 @@ import {
   type Comment,
   type Timeline,
 } from "../core/index.js";
-import { InvalidVideoError, packageRoot, prepareReview } from "../server/index.js";
+import { InvalidVideoError, VideoChangedError, packageRoot, prepareReview } from "../server/index.js";
 import { formatCommentRow } from "./format.js";
 import { openCommand } from "./open.js";
-import { parseActors, parseEventType, watchReview } from "./watch.js";
+import { MAX_SHARE_TTL_HOURS, parseShareTtl } from "../server/share.js";
+import { humanViewNotice, parseActors, parseCursorName, parseEventType, watchReview } from "./watch.js";
 
 // ----------------------------------------------------------------- helpers ----
 
 function describeError(e: unknown): string {
   if (e instanceof ZodError) return e.issues.map((i) => `${i.path.join(".") || "input"}: ${i.message}`).join("; ");
-  if (e instanceof StoreError || e instanceof InvalidVideoError) return e.message;
+  if (e instanceof StoreError || e instanceof InvalidVideoError || e instanceof VideoChangedError) return e.message;
   const err = e as NodeJS.ErrnoException;
   if (err?.code === "ENOENT") return `file not found: ${err.path ?? ""}`.trim();
   return err instanceof Error ? err.message : String(e);
@@ -69,6 +70,19 @@ async function existingReviewDir(target: string): Promise<string> {
 
 const out = (text: string) => console.log(text);
 const printJson = (value: unknown) => out(JSON.stringify(value, null, 2));
+
+function shareArg(value: string): "tailscale" {
+  if (value !== "tailscale") throw new InvalidArgumentError("use `--share` (all private networks) or `--share tailscale`");
+  return value;
+}
+
+function ttlArg(value: string): number {
+  try {
+    return parseShareTtl(value);
+  } catch (e) {
+    throw new InvalidArgumentError((e as Error).message);
+  }
+}
 
 function intArg(name: string) {
   return (value: string): number => {
@@ -114,24 +128,35 @@ program
   .option("--edl <path>", "edl.json to build the timeline from")
   .option("--timeline <path>", "Frameback timeline sidecar")
   .option("--no-carry", "do not carry comments over from the previous _vN version")
+  .option("--force", "keep reviewing a video that changed after it was opened (re-adopts the file as it is now)")
   .option("--dev", "API only; the Vite dev server serves the UI")
-  .action(action((video: string, o) => openCommand(video, o)));
+  .option("--share [network]", "let another computer review with a private link: all private networks (Tailscale + home/office wifi), or `tailscale` for Tailscale only", shareArg)
+  .option("--share-ttl <hours>", `hours the share link stays valid (default 12, max ${MAX_SHARE_TTL_HOURS})`, ttlArg)
+  .action(
+    action((video: string, o) => {
+      if (o.shareTtl !== undefined && !o.share) throw new Error("--share-ttl needs --share");
+      return openCommand(video, { ...o, share: o.share === true ? "lan" : o.share });
+    }),
+  );
 
 program
   .command("watch")
   .argument("<target>", "video file or review dir (may not exist yet)")
   .description("stream review events: NDJSON for agents (--json) or one readable line each (--text)")
-  .option("--since <seq>", "replay events after this sequence number (default: replay everything; --exit-on then only counts new events)", intArg("since"))
-  .option("--tail", "start at the end of the log instead of replaying")
+  .option("--since <seq>", "replay events after this sequence number (overrides the saved cursor; --exit-on then only counts new events)", intArg("since"))
+  .option("--tail", "start at the end of the log instead of replaying (overrides the saved cursor)")
+  .option("--cursor <name>", "name of the saved cursor (default: watch); a restart without --since/--tail resumes after the last delivered event; use --since 0 to start over", parseCursorName)
   .option("--json", "one Event JSON per line (default when stdout is not a terminal)")
   .option("--text", "one human-readable line per event (default on a terminal)")
   .option("--exit-on <type>", "exit 0 right after printing the first NEW event of this type, e.g. review.submitted (replayed history does not count)")
   .option("--actor <list>", "only events written by these actors (comma separated: human,agent,system); use human,system to skip your own echoes")
   .action(
-    action(async (target: string, o: { since?: number; tail?: boolean; json?: boolean; text?: boolean; exitOn?: string; actor?: string }) => {
+    action(async (target: string, o: { since?: number; tail?: boolean; cursor?: string; json?: boolean; text?: boolean; exitOn?: string; actor?: string }) => {
       if (o.json && o.text) throw new Error("use either --json or --text");
       const exitOn = o.exitOn ? parseEventType(o.exitOn) : undefined;
       const format = o.json ? "json" : o.text ? "text" : process.stdout.isTTY ? "text" : "json";
+      const notice = humanViewNotice(Boolean(process.stdout.isTTY), Boolean(o.json));
+      if (notice) console.error(`frameback: ${notice}`);
       const controller = new AbortController();
       for (const sig of ["SIGINT", "SIGTERM"] as const) process.once(sig, () => controller.abort());
       process.stdout.on("error", (e: NodeJS.ErrnoException) => {
@@ -141,6 +166,7 @@ program
         target,
         since: o.since,
         tail: o.tail,
+        cursor: o.cursor,
         format,
         exitOn,
         actors: o.actor ? parseActors(o.actor) : undefined,

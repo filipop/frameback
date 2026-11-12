@@ -28,7 +28,8 @@ lock with `seq = last seq + 1` (starting at 1).
   "schemaVersion": 1,
   "id": "final_v2",              // = stem
   "video": { "file": "../../final_v2.mp4",  // relative to the review dir
-             "duration": 2412.48, "fps": 24, "width": 1920, "height": 1080 },   // filled when known
+             "duration": 2412.48, "fps": 24, "width": 1920, "height": 1080,   // filled when known
+             "fingerprint": { "size": 81920000, "mtimeMs": 1794200000000, "hash": "<sha1 of first+last 64 KB>" } },  // optional; set on open
   "timeline": { "file": "../../final_v2.timeline.json" } ,              // optional; or null
   "state": "reviewing",                   // reviewing | submitted | processing | delivered | closed
   "round": 1,                             // incremented when a submitted review is reopened
@@ -109,6 +110,7 @@ Every line: `{ "seq": 12, "at": "ISO", "type": "<type>", "review": "<stem>", "co
 | `comment.agent_status` | agent | status / plan / reply change | `{ status }` |
 | `thread.message` | human\|agent | message appended | `{ author }` |
 | `review.submitted` | human | **Process review** pressed | `{ counts: { total, open, … } }` |
+| `review.video_adopted` | human | `frameback open --force` accepted a video that changed after it was opened | `{ previous, current }` (fingerprints) |
 | `review.state` | agent\|human | processing / delivered / closed (agent); reviewing after reopen (human, `reopened: true`, `round`) | `{ state, nextVideo?, reopened?, round? }` |
 
 ## 5. Agent interface
@@ -116,7 +118,7 @@ Every line: `{ "seq": 12, "at": "ISO", "type": "<type>", "review": "<stem>", "co
 ### CLI (works everywhere)
 
 ```
-frameback watch <video|reviewDir> [--since <seq>] [--tail] [--exit-on review.submitted] [--actor human,agent,system] [--json|--text]
+frameback watch <video|reviewDir> [--since <seq>] [--tail] [--cursor <name>] [--exit-on review.submitted] [--actor human,agent,system] [--json|--text]
 frameback list  <video|reviewDir> [--agent-status pending,needs_info] [--json]
 frameback show  <reviewDir> <commentId> [--json]
 frameback update <reviewDir> <commentId> --status <agentStatus> [--plan …] [--reply …] [--applied-in <stem>] [--seen-revision <n>] [--json]
@@ -128,8 +130,11 @@ frameback export <reviewDir> [--format md|json]       # FEEDBACK.md-style summar
 
 `watch --json` prints exactly one Event JSON per line on stdout and flushes; diagnostics go to stderr.
 Agents should pass `--actor human,system` so they are not notified of their own writes.
-Designed for Claude Code: run it with the Monitor tool (one notification per comment) or as a background task with
-`--exit-on review.submitted` (one notification when the review is done).
+Designed for Claude Code: agents run `watch --json` with the Monitor tool (or any persistent background process), so each
+comment is delivered as it is sent and can be handled while the reviewer keeps working; `review.submitted` only closes
+the round. `--exit-on review.submitted` is a degraded fallback for environments that cannot keep a background process:
+it notifies only when the round closes, so it is **not** real time. On a terminal `watch` defaults to a human-readable
+view and prints a stderr notice; agents must pass `--json`.
 
 ### MCP (`frameback mcp`, stdio)
 
@@ -192,11 +197,23 @@ reviewing --(human: Process review)--> submitted --(agent)--> processing --(agen
   EDL-derived duration differs from the video by > 0.5 s). Staging edits to the EDL never move the timeline under
   a review. Entity anchors copy the item's times, so they stay meaningful even if ids change later.
 
+**Never overwrite a video that is under review.** The review is anchored to the exact cut that was opened. When the
+file under `video.file` no longer matches `video.fingerprint` (size or edge hash; a bare mtime change is ignored), the UI
+shows a persistent warning, `GET /api/reviews/:rid/video-status` and the bundle's `videoStatus` report `changed: true`,
+and `frameback open` refuses (HTTP 409, `code: "video_changed"`) unless `--force` is given. Deliver a new cut as the next
+version (`_v(N+1)`) instead. A review without a fingerprint adopts the current file silently.
+
 **Regions** are normalized to the encoded video frame (letterbox excluded), origin top-left.
 
 **watch semantics**
 - `frameback watch <target>` waits for the review dir to exist, then **replays** all events with seq > `--since`
   (default 0) and keeps tailing (polling ~250 ms; only complete lines). `--tail` starts at the current end instead.
+- **Cursor**: `watch` saves the last delivered `seq` to `<reviewDir>/.cursors/<name>.json` (default name `watch`,
+  change it with `--cursor <name>`; written atomically, separate from `events.ndjson`). Restarting with neither
+  `--since` nor `--tail` resumes right after it, so events written while the watcher was stopped are delivered once.
+  `--since <n>` / `--tail` take priority over the saved cursor (and then update it); `--since 0` starts over. If the
+  saved cursor is ahead of the log (review recreated) the watch starts from the beginning and says so on stderr.
+  Use a distinct `--cursor` per consumer watching the same review.
 - `--json`: one Event per line. `--text`: one human-readable line per event, e.g.
   `#12 comment.created c-0007 [must/framing] 00:12.48–00:15.20 region(rect) "Center the speaker…" snapshot=…/c-0007.jpg`.
 - `--exit-on <type>` exits 0 right after printing the first event of that type (e.g. `review.submitted`).

@@ -21,6 +21,7 @@ import {
   p,
   readComment,
   readReview,
+  checkVideo,
   readTimeline,
   reopenReview,
   setHumanStatus,
@@ -35,8 +36,23 @@ import {
   type ReviewSummary,
   type Waveform,
 } from "../core/index.js";
-import { InvalidVideoError, VIDEO_EXTENSIONS, splitVersion } from "./prepare.js";
+import { InvalidVideoError, VideoChangedError, VIDEO_EXTENSIONS, splitVersion } from "./prepare.js";
 import type { Registry, RegistryEntry } from "./registry.js";
+import {
+  EXPIRED_PAGE,
+  FailureLimiter,
+  SHARE_COOKIE,
+  TOO_MANY_PAGE,
+  UNAUTHORIZED_PAGE,
+  cookieValue,
+  hostnameOf,
+  isTrustedLocal,
+  keyMatches,
+  plainAddress,
+  remoteAllowed,
+  type ShareConfig,
+  type ShareLink,
+} from "./share.js";
 import { streamEvents } from "./sse.js";
 
 export interface AppOptions {
@@ -45,6 +61,12 @@ export interface AppOptions {
   webDir?: string;
   /** dev mode: the Vite dev server proxies to us, so accept its localhost origin */
   dev?: boolean;
+  /** `--share`: untrusted peers may connect, but only with the key (query once, then cookie) and only to review routes */
+  share?: ShareConfig;
+  /** share links for `/api/share` (trusted local clients only) */
+  shareLinks?: (rid?: string) => ShareLink[];
+  /** override the share-mode failure limiter (tests) */
+  limiter?: FailureLimiter;
 }
 
 const COMMENT_ID = /^c-\d{4,}$/;
@@ -67,10 +89,11 @@ const RegisterBody = z.object({
   edl: z.string().optional(),
   timeline: z.string().optional(),
   carry: z.boolean().optional(),
+  force: z.boolean().optional(),
 });
 const StatusBody = z.object({ status: HumanStatus });
 const ThreadBody = z.object({ text: z.string().min(1) });
-const VideoInfoBody = VideoInfo.omit({ file: true }).partial();
+const VideoInfoBody = VideoInfo.omit({ file: true, fingerprint: true }).partial();
 
 type Handler = (req: Request, res: Response) => Promise<unknown> | unknown;
 const route = (fn: Handler): RequestHandler => (req, res, next) => {
@@ -84,15 +107,45 @@ export function createApp(opts: AppOptions): express.Express {
   const waveforms = new Map<string, Promise<Waveform | null>>();
 
   // Local-only guard: DNS rebinding (foreign Host) and cross-site requests (foreign Origin) never reach a route.
+  const share = opts.share;
   app.use((req, _res, next) => {
     const host = req.headers.host ?? "";
-    if (!LOCAL_HOST.test(host)) return next(new HttpError(403, "forbidden host"));
+    if (!LOCAL_HOST.test(host) && !(share && share.hosts.includes(hostnameOf(host)))) return next(new HttpError(403, "forbidden host"));
     const origin = req.headers.origin;
     if (origin && origin !== `http://${host}` && !(opts.dev && DEV_ORIGIN.test(origin))) {
       return next(new HttpError(403, "forbidden origin"));
     }
     next();
   });
+  // Share mode (see share.ts / SECURITY.md): trusted local clients keep full access; everyone else needs the key and
+  // only reaches the review routes in the allowlist.
+  if (share) {
+    const limiter = opts.limiter ?? new FailureLimiter();
+    app.use((req, res, next) => {
+      // S3: only the addresses we chose to listen on (a socket on any other interface is refused)
+      if (!share.listen.has(plainAddress(req.socket.localAddress))) return next(new HttpError(403, "forbidden interface"));
+      res.setHeader("Referrer-Policy", "no-referrer");
+      if (isTrustedLocal(req)) return next();
+      res.locals.remote = true;
+      res.setHeader("Cache-Control", "no-store");
+      const peer = plainAddress(req.socket.remoteAddress);
+      if (limiter.blocked(peer)) return res.status(429).setHeader("Retry-After", "60").type("html").send(TOO_MANY_PAGE);
+      if (Date.now() >= share.expiresAt) return res.status(401).type("html").send(EXPIRED_PAGE);
+      if (!keyMatches(share.key, cookieValue(req.headers.cookie, SHARE_COOKIE))) {
+        if (req.method === "GET" && keyMatches(share.key, req.query.key)) {
+          const maxAge = Math.max(1, Math.floor((share.expiresAt - Date.now()) / 1000));
+          res.append("Set-Cookie", `${SHARE_COOKIE}=${share.key}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}`);
+          const url = new URL(req.originalUrl, "http://x");
+          url.searchParams.delete("key");
+          return res.redirect(302, url.pathname + url.search);
+        }
+        limiter.fail(peer);
+        return res.status(401).type("html").send(UNAUTHORIZED_PAGE);
+      }
+      if (!remoteAllowed(req.method, req.path)) return next(new HttpError(403, "not available from another computer"));
+      next();
+    });
+  }
   app.use((_req, res, next) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
     // the UI is never meant to be framed: a hostile page could clickjack "Process review" or deletes
@@ -128,17 +181,27 @@ export function createApp(opts: AppOptions): express.Express {
   // ----------------------------------------------------------------- reviews --
 
   app.get("/api/health", (_req, res) => {
-    const health: Health = { app: "frameback", version: VERSION, pid: process.pid };
+    const health: Health = { app: "frameback", version: VERSION, pid: process.pid, ...(share ? { share: true } : {}) };
     res.json(health);
   });
 
+  // Links for a later `frameback open --share` that attaches to this server. Trusted local clients only.
+  app.get("/api/share", (req, res) => {
+    if (!share || !isTrustedLocal(req)) throw new HttpError(404, "not found");
+    const rid = typeof req.query.rid === "string" ? req.query.rid : undefined;
+    const links = opts.shareLinks?.(rid) ?? [];
+    res.json({ links, urls: links.map((l) => l.url), mode: share.mode, expiresAt: new Date(share.expiresAt).toISOString() });
+  });
+
   app.get("/api/reviews", route(async (_req, res) => {
-    res.json(await Promise.all(registry.list().map(summary)));
+    const list = await Promise.all(registry.list().map(summary));
+    // remote peers never see absolute paths of this machine
+    res.json(res.locals.remote ? list.map(({ reviewDir: _dir, ...rest }) => rest) : list);
   }));
 
   app.post("/api/reviews", json, route(async (req, res) => {
     const body = RegisterBody.parse(req.body);
-    const { entry, prepared } = await registry.register(body.video, { edlPath: body.edl, timelinePath: body.timeline, carry: body.carry });
+    const { entry, prepared } = await registry.register(body.video, { edlPath: body.edl, timelinePath: body.timeline, carry: body.carry, force: body.force });
     const response: RegisterReviewResponse = { ...(await summary(entry)), carried: prepared.carried, warnings: prepared.warnings };
     res.json(response);
   }));
@@ -161,8 +224,13 @@ export function createApp(opts: AppOptions): express.Express {
       lastSeq: seq,
       versions: await listVersions(entry, registry),
       next: await nextOf(entry, review.nextVideo),
+      videoStatus: await checkVideo(entry.reviewDir),
     };
     res.json(bundle);
+  }));
+
+  app.get("/api/reviews/:rid/video-status", route(async (req, res) => {
+    res.json(await checkVideo(entryOf(req).reviewDir));
   }));
 
   app.get("/api/reviews/:rid/timeline", route(async (req, res) => {
@@ -285,7 +353,8 @@ export function createApp(opts: AppOptions): express.Express {
   app.use("/media", (_req, _res, next) => next(new HttpError(404, "not found")));
   if (opts.webDir) {
     const webDir = opts.webDir;
-    app.use(express.static(webDir, { index: false }));
+    // in share mode, keep the no-store set for remote peers
+    app.use(express.static(webDir, { index: false, cacheControl: !share }));
     app.get("*", (_req, res) => res.sendFile(path.join(webDir, "index.html")));
   } else {
     app.get("*", (_req, res) => {
@@ -302,6 +371,7 @@ export function createApp(opts: AppOptions): express.Express {
 
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
     const { status, body } = toHttpError(err);
+    if (res.locals.remote) body.error = redactPaths(body.error);
     if (status >= 500) process.stderr.write(`frameback: ${err instanceof Error ? err.stack : String(err)}\n`);
     if (res.headersSent) return res.end();
     const headers = (err as { headers?: Record<string, string> })?.headers;
@@ -320,6 +390,7 @@ function toHttpError(err: unknown): { status: number; body: { error: string; cod
     const status = err.code === "not_found" ? 404 : err.code === "conflict" ? 409 : 400;
     return { status, body: { error: err.message, code: err.code } };
   }
+  if (err instanceof VideoChangedError) return { status: 409, body: { error: err.message, code: "video_changed" } };
   if (err instanceof InvalidVideoError) return { status: 400, body: { error: err.message, code: "invalid" } };
   if (err instanceof ZodError) {
     const issue = err.issues[0];
@@ -333,6 +404,13 @@ function toHttpError(err: unknown): { status: number; body: { error: string; cod
     return { status: bodyParserError.status, body: { error: bodyParserError.message ?? "bad request" } };
   }
   return { status: 500, body: { error: "internal error" } };
+}
+
+const ABSOLUTE_PATH = /(?:[A-Za-z]:)?[\\/](?:[^\s'"`\\/]+[\\/])+[^\s'"`]*/g;
+
+/** Error messages for remote peers: absolute paths of this machine become `<path>`. */
+export function redactPaths(message: string): string {
+  return message.replace(ABSOLUTE_PATH, "<path>");
 }
 
 function decodeSnapshot(dataUrl: string | null | undefined): Buffer | null {
@@ -369,7 +447,8 @@ async function sendRegisteredFile(res: Response, file: string): Promise<void> {
   if (!(await exists(file))) throw new HttpError(404, "file not found");
   await new Promise<void>((resolve, reject) => {
     // Range requests, ETag and content types are handled by express/send; dotfiles allowed (project dirs may start with '.')
-    res.sendFile(file, { dotfiles: "allow", headers: { "Cache-Control": "no-cache" } }, (err) => {
+    const cacheControl = String(res.getHeader("Cache-Control") ?? "no-cache"); // share mode sets no-store for remotes
+    res.sendFile(file, { dotfiles: "allow", headers: { "Cache-Control": cacheControl } }, (err) => {
       if (err && !res.headersSent) reject(err);
       else resolve();
     });

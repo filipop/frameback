@@ -9,7 +9,7 @@ and write what you want changed. Your agent sees it the moment you send it, prep
 reviewing, and renders the next version once. 100% local, open source, no accounts.
 
 Created by **Guillermo Becerra (GBO)** · [@guillebecerrao](https://github.com/guillebecerrao) · as the review companion of
-[gbo-video](https://github.com/guillebecerrao/gbo-video), his open-source agentic video editing skill.
+[gbo-video](https://github.com/guillebecerrao/gbo-video-method), his open-source agentic video editing skill.
 [Source](https://github.com/guillebecerrao/frameback) · [Issues](https://github.com/guillebecerrao/frameback/issues) · [Security](SECURITY.md)
 
 ## The problem
@@ -81,6 +81,24 @@ node examples/fake-agent.mjs examples/demo/edit/final_demo_v1.mp4   # in another
 The URL is printed on start. To use another port: `node dist/cli/index.js open examples/demo/edit/final_demo_v1.mp4 --port 4880`.
 <!-- Screenshot / GIF of the review UI: add docs/media/frameback.gif and embed it here before announcing. -->
 
+## Review from another computer
+
+Editing on one Mac and reviewing on another, over [Tailscale](https://tailscale.com) or the same home/office wifi?
+
+```sh
+frameback open video.mp4 --share tailscale   # only over Tailscale (encrypted)
+frameback open video.mp4 --share             # Tailscale and your private wifi/LAN
+```
+
+It prints one recommended link (`http://100.x.y.z:4747/?key=…`, the Tailscale IP, or your LAN IP when Tailscale is not
+running): open that one on the other computer. It does not depend on DNS. Below it come alternative addresses for the
+same review (the `*.ts.net` name, `studio-mac.local`), to try only if the first does not open. The link marked
+"this Mac only" has no key and works only on this computer.
+The recommended link contains a private key: whoever has it can watch, comment and submit the
+review, and nothing else (they cannot open other files or change the server). It expires after 12 hours
+(`--share-ttl <hours>`, max 24) or when you close the command. Plain wifi traffic is not encrypted: on a network you do
+not trust, use `--share tailscale`. See [SECURITY.md](SECURITY.md).
+
 ## Ways to anchor a comment
 
 | Anchor | How |
@@ -104,7 +122,8 @@ other), an optional action (remove, change, add, move, keep, question) and a pri
 
 1. The agent delivers a video and runs `frameback open <video>`.
 2. It listens: **Claude Code** runs `frameback watch <video> --json --actor human,system` with the Monitor tool (one notification per
-   comment), or a background task with `--exit-on review.submitted`.
+   comment, handled as it arrives). A background task with `--exit-on review.submitted` is only a degraded fallback
+   (no real time: it fires when the round closes).
 3. For each comment it looks at the snapshot, then acknowledges, prepares a change against a *staging* edit, or asks a
    question in the thread. You see statuses and replies update live.
 4. You press **Process review**. The agent finishes what is left, renders **once** to `…_v2.mp4`, marks comments
@@ -120,7 +139,7 @@ claude mcp add frameback -- frameback mcp
 claude mcp add frameback -- node /absolute/path/to/frameback/dist/cli/index.js mcp
 ```
 
-Editing with [gbo-video](https://github.com/guillebecerrao/gbo-video)? It already includes this loop; you only need
+Editing with [gbo-video](https://github.com/guillebecerrao/gbo-video-method)? It already includes this loop; you only need
 the `frameback` command on your PATH.
 
 Not using Claude Code? Point any agent at [`docs/INTEGRATION.md`](docs/INTEGRATION.md) (plain files, CLI, or MCP).
@@ -131,7 +150,7 @@ Not using Claude Code? Point any agent at [`docs/INTEGRATION.md`](docs/INTEGRATI
 - **Any EDL-based pipeline.** If an `edl.json` sits next to the video (`sources`, `ranges`, `broll`, word-level
   transcripts), Frameback derives cuts, transitions, B-roll, captions and words tracks from it. The shape is the
   `video-use` `edl.json` shape, described in [`docs/PROTOCOL.md`](docs/PROTOCOL.md) §6.
-- **[gbo-video](https://github.com/guillebecerrao/gbo-video).** The Claude Code video editing skill writes the
+- **[gbo-video](https://github.com/guillebecerrao/gbo-video-method).** The Claude Code video editing skill writes the
   timeline sidecar on every render and runs the Frameback review loop out of the box (optional: it works without it).
 - **Timeline sidecar.** Emit `<video stem>.timeline.json` for an exact timeline. Spec and converters in
   [`docs/INTEGRATION.md`](docs/INTEGRATION.md).
@@ -185,7 +204,7 @@ Run `frameback <command> --help` for every option. Targets (`<target>`) are a vi
 
 | Command | Purpose |
 |---------|---------|
-| `open <video> [--port] [--no-open] [--edl] [--timeline] [--no-carry]` | Start the UI (or register the video on a running instance) |
+| `open <video> [--port] [--no-open] [--share [tailscale]] [--share-ttl <h>] [--edl] [--timeline] [--no-carry] [--force]` | Start the UI (or register the video on a running instance) |
 | `watch <target> [--since n] [--tail] [--json\|--text] [--exit-on type]` | Stream review events, one per line |
 | `list <target> [--agent-status …] [--json]` | List comments; `--json` returns `{lastSeq, review, comments}` |
 | `show <target> <id> [--json]` | Show one comment |
